@@ -9,6 +9,13 @@
     "core:default",
     "opener:default",
     "dialog:default",
-    "upload:default"
+    "upload:default",
+    "fs:default",
+    "fs:allow-app-meta",
+    "fs:allow-app-meta-recursive",
+    {
+      "identifier": "http:default",
+      "allow": ["http://localhost:8080/*"]
+    }
   ]
 }
