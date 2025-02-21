@@ -11,9 +11,14 @@
     {
       "identifier": "http:default",
       "allow": [
-        { "url": "http://localhost:8080/*" },
-        { "url": "http://192.168.50.68:8080/*" }
+        {
+          "url": "http://localhost:8080/*"
+        },
+        {
+          "url": "http://192.168.50.68:8080/*"
+        }
       ]
-    }
+    },
+    "http:default"
   ]
 }

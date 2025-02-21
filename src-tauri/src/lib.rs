@@ -1,9 +1,9 @@
-use std::{collections::BTreeMap, io::Cursor, sync::Mutex, time::Duration};
+use std::{collections::BTreeMap, io::Cursor, sync::Mutex};
 
-use rodio::{source::SineWave, Decoder, OutputStream, Sink, Source};
+use rodio::{Decoder, OutputStream, Sink};
 use serde::{Deserialize, Serialize};
-use tauri::{Manager, State};
-use tauri_plugin_http::reqwest::Client;
+use tauri::{async_runtime::block_on, Manager, State};
+use tauri_plugin_http::reqwest;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -11,7 +11,7 @@ fn greet(name: &str) -> String {
 }
 
 struct AppState {
-    client: Client,
+    client: reqwest::Client,
     sink: Sink,
     album_cache: Mutex<BTreeMap<i64, Album>>,
     artist_cache: Mutex<BTreeMap<i64, Artist>>,
@@ -34,20 +34,18 @@ struct Track {
 
 impl AppState {
     pub fn new(sink: Sink) -> Self {
-        let client = Client::new();
+        let client = reqwest::Client::new();
         let mut album_cache = BTreeMap::new();
         let mut artist_cache = BTreeMap::new();
         let mut track_cache = BTreeMap::new();
 
-        let get_lib_resp = tauri::async_runtime::block_on(async {
-            client
+        let get_lib_resp = block_on(async {
+            let resp = client
                 .get(format!("{SERVER_URL}/get-library"))
                 .send()
                 .await
-                .unwrap()
-                .json::<GetLibResp>()
-                .await
-                .unwrap()
+                .unwrap();
+            resp.json::<GetLibResp>().await.unwrap()
         });
 
         for album in get_lib_resp.albums {
@@ -209,6 +207,7 @@ const SERVER_URL: &'static str = "http://192.168.50.68:8080";
 pub fn run() {
     let (_stream, stream_handle) = OutputStream::try_default().unwrap();
     let sink = Sink::try_new(&stream_handle).unwrap();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_opener::init())

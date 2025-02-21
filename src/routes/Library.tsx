@@ -1,6 +1,7 @@
 import { createResource, For, Suspense } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { A } from "@solidjs/router";
+import { SERVER_URL } from "..";
 
 type LibraryData = {
   albums: AlbumData[];
@@ -28,9 +29,12 @@ function Library() {
           <Suspense>
             <For each={lib()?.albums}>
               {(album) => (
-                <A href={`/album/${album.id}`} class="max-w-1/3 border-blue-500">
-                  <h3 class="text-md font-bold font-serif text-nowrap text-ellipsis overflow-hidden">{album.title}</h3>
-                  <p>by {album.artist_name}</p>
+                <A href={`/album/${album.id}`} class="max-w-1/3 flex flex-col space-y-2">
+                  <img src={`${SERVER_URL}/get-image?id=${album.id}`} />
+                  <div>
+                    <h3 class="text-md font-bold font-serif text-nowrap text-ellipsis overflow-hidden">{album.title}</h3>
+                    <p>by {album.artist_name}</p>
+                  </div>
                 </A>
               )}
             </For>

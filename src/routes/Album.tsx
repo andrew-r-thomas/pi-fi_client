@@ -1,6 +1,7 @@
 import { useParams } from "@solidjs/router";
 import { invoke } from "@tauri-apps/api/core";
 import { Index, Suspense, createResource } from "solid-js";
+import { SERVER_URL } from "..";
 
 type Album = {
   title: string;
@@ -25,13 +26,16 @@ function Album() {
   return (
     <div class="flex flex-col space-y-8 h-full w-full">
       <Suspense>
-        <div>
-          <h1
-            class="text-4xl font-serif font-bold text-nowrap text-ellipsis overflow-hidden"
-          >
-            {album()?.title}
-          </h1>
-          <p class="text-xl font-bold">{album()?.artist_name}</p>
+        <div class="flex flex-col space-y-4">
+          <img src={`${SERVER_URL}/get-image?id=${id}`} />
+          <div>
+            <h1
+              class="text-4xl font-serif font-bold text-nowrap text-ellipsis overflow-hidden"
+            >
+              {album()?.title}
+            </h1>
+            <p class="text-xl font-bold">{album()?.artist_name}</p>
+          </div>
           <hr />
         </div>
         <div class="flex flex-col space-y-4 overflow-y-scroll">
