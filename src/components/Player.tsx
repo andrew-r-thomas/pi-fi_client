@@ -77,7 +77,10 @@ function Player() {
                 </Match>
               </Switch>
             </button>
-            <button onClick={(e) => e.stopPropagation()}>
+            <button onClick={(e) => {
+              e.stopPropagation();
+              invoke("skip");
+            }}>
               <IoPlaySkipForwardSharp size={32} />
             </button>
           </div>
