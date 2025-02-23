@@ -25,4 +25,5 @@ serde_json = "1"
 tauri-plugin-http = "2"
 rodio = { version = "0.20.1", features = ["cpal-shared-stdcxx"] }
 tokio = { version = "1.43.0", features = ["full"] }
+# reqwest = { version = "0.12.12", features = ["json"] }
 

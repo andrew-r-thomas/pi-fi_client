@@ -12,6 +12,7 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@corvu/drawer": "^0.2.3",
     "@solidjs/router": "^0.15.3",
     "@tailwindcss/vite": "^4.0.7",
     "@tauri-apps/api": "^2",

@@ -2,8 +2,9 @@ use std::{collections::BTreeMap, io::Cursor, sync::Mutex};
 
 use rodio::{Decoder, OutputStream, Sink};
 use serde::{Deserialize, Serialize};
-use tauri::{async_runtime::block_on, Manager, State};
-use tauri_plugin_http::reqwest;
+use tauri::{async_runtime::block_on, ipc::Channel, Manager, State};
+
+use tauri_plugin_http::reqwest::Client;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -11,11 +12,12 @@ fn greet(name: &str) -> String {
 }
 
 struct AppState {
-    client: reqwest::Client,
+    client: Client,
     sink: Sink,
     album_cache: Mutex<BTreeMap<i64, Album>>,
     artist_cache: Mutex<BTreeMap<i64, Artist>>,
     track_cache: Mutex<BTreeMap<i64, Track>>,
+    player_channel: Mutex<Option<Channel<PlayerUpdateMsg>>>,
 }
 struct Album {
     title: String,
@@ -34,7 +36,7 @@ struct Track {
 
 impl AppState {
     pub fn new(sink: Sink) -> Self {
-        let client = reqwest::Client::new();
+        let client = Client::new();
         let mut album_cache = BTreeMap::new();
         let mut artist_cache = BTreeMap::new();
         let mut track_cache = BTreeMap::new();
@@ -79,6 +81,7 @@ impl AppState {
             album_cache: Mutex::new(album_cache),
             artist_cache: Mutex::new(artist_cache),
             track_cache: Mutex::new(track_cache),
+            player_channel: Mutex::new(None),
         }
     }
 }
@@ -196,9 +199,91 @@ async fn play_track(id: i64, state: State<'_, AppState>) -> Result<(), ()> {
     let bytes = resp.bytes().await.unwrap();
     let cursor = Cursor::new(bytes);
     let decoder = Decoder::new(cursor).unwrap();
+
+    let track_cache = state.track_cache.lock().unwrap();
+    let track = track_cache.get(&id).unwrap();
+    let track_title = track.title.clone();
+    let cover_art_id = track.album_id;
+    let artist_cache = state.artist_cache.lock().unwrap();
+    let artist_title = artist_cache.get(&track.artist_id).unwrap().name.clone();
+    state.sink.clear();
     state.sink.append(decoder);
+    state.sink.play();
+    state
+        .player_channel
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .send(PlayerUpdateMsg::UpdatePlaying { playing: true })
+        .unwrap();
+    state
+        .player_channel
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .send(PlayerUpdateMsg::UpdateCurrentTrack {
+            current_track: CurrentTrack {
+                track_title,
+                artist_title,
+                cover_art_id,
+            },
+        })
+        .unwrap();
 
     Ok(())
+}
+
+#[derive(Serialize, Clone)]
+#[serde(tag = "event", content = "data")]
+enum PlayerUpdateMsg {
+    UpdatePlaying { playing: bool },
+    UpdateCurrentTrack { current_track: CurrentTrack },
+}
+#[derive(Serialize, Clone)]
+struct CurrentTrack {
+    track_title: String,
+    artist_title: String,
+    cover_art_id: i64,
+}
+
+#[tauri::command]
+fn setup_player(state: State<'_, AppState>, channel: Channel<PlayerUpdateMsg>) {
+    channel
+        .send(PlayerUpdateMsg::UpdateCurrentTrack {
+            current_track: CurrentTrack {
+                track_title: "Crusades".into(),
+                artist_title: "Geese".into(),
+                cover_art_id: 1,
+            },
+        })
+        .unwrap();
+
+    let mut player_channel = state.player_channel.lock().unwrap();
+    *player_channel = Some(channel);
+}
+
+#[tauri::command]
+fn toggle_playing(state: State<'_, AppState>) {
+    let playing = match state.sink.is_paused() {
+        true => {
+            state.sink.play();
+            true
+        }
+        false => {
+            state.sink.pause();
+            false
+        }
+    };
+    state
+        .player_channel
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .send(PlayerUpdateMsg::UpdatePlaying { playing })
+        .unwrap();
 }
 
 const SERVER_URL: &'static str = "http://192.168.50.68:8080";
@@ -219,7 +304,9 @@ pub fn run() {
             greet,
             get_library,
             get_album,
-            play_track
+            play_track,
+            setup_player,
+            toggle_playing,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
