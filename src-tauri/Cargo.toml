@@ -29,4 +29,7 @@ cpal = "0.15.3"
 rtrb = "0.3.2"
 futures-util = "0.3.31"
 claxon = "0.4.3"
+bytes = "1.10.0"
+tokio-util = { version = "0.7.13", features = ["full"] }
+symphonia = "0.5.4"
 

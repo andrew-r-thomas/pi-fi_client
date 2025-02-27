@@ -1,4 +1,5 @@
 pub mod cache;
+mod flac;
 mod main_stream;
 pub mod player;
 pub mod track_buffer;
