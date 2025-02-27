@@ -5,13 +5,12 @@
 
 */
 
-use std::marker::PhantomData;
-
+use claxon::Block;
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
     Device, FromSample, Sample, SizedSample, Stream, StreamConfig,
 };
-use rtrb::{Consumer, Producer, RingBuffer};
+use rtrb::{chunks::ChunkError, Consumer, PopError, Producer, RingBuffer};
 
 /// this is basically a specialized handle to the main audio thread that
 /// understands the context of a streamed music player
@@ -22,11 +21,12 @@ pub struct MainStreamHandle {
 
 impl MainStreamHandle {
     pub fn new() -> Self {
+        let (queue, recv) = RingBuffer::new(256);
+
         let host = cpal::default_host();
         let device = host.default_output_device().unwrap();
         let config = device.default_output_config().unwrap();
 
-        let (send, recv) = RingBuffer::new(256);
         let stream = match config.sample_format() {
             cpal::SampleFormat::I8 => {
                 build_main_stream::<i8>(&device, &config.into(), recv).unwrap()
@@ -61,12 +61,8 @@ impl MainStreamHandle {
             sample_format => panic!("Unsupported sample format '{sample_format}'"),
         };
 
-        Self {
-            stream,
-            queue: send,
-        }
+        Self { queue, stream }
     }
-
     pub fn play(&self) {
         self.stream.play().unwrap();
     }
@@ -76,33 +72,39 @@ impl MainStreamHandle {
     }
 }
 
-struct MainStream<S>
-where
-    S: Sample + Silence,
-{
-    _phantom: PhantomData<S>,
+struct MainStream {
     current_track: Option<TrackStream>,
     queue: Consumer<TrackStream>,
 }
-impl<S> MainStream<S>
-where
-    S: Sample + Silence,
-{
+impl MainStream {
     pub fn new(queue: Consumer<TrackStream>) -> Self {
         Self {
             queue,
             current_track: None,
-            _phantom: PhantomData,
         }
     }
 
-    pub fn cb(&mut self, buf: &mut [S]) {
+    pub fn cb<S: Sample + Silence + FromSample<i32>>(&mut self, buf: &mut [S]) {
+        // output silence by default
         buf.fill(S::silence());
-        match &self.current_track {
-            Some(t) => {}
-            None => {}
+
+        // set up current track if needed
+        if self.current_track.is_none() {
+            match self.queue.pop() {
+                Ok(t) => {
+                    self.current_track = Some(t);
+                }
+                Err(_) => return,
+            }
         }
-        todo!()
+
+        // ask current track to fill up samples
+        if let ReadSamplesResult::Done(n) = self.current_track.as_mut().unwrap().read_samples(buf) {
+            if let Ok(mut t) = self.queue.pop() {
+                t.read_samples(&mut buf[n..]);
+                self.current_track = Some(t);
+            }
+        }
     }
 }
 
@@ -122,7 +124,50 @@ where
     Ok(stream)
 }
 
-struct TrackStream {}
+enum ReadSamplesResult {
+    Ok,
+    Done(usize),
+    Waiting,
+}
+
+struct TrackStream {
+    recv: Consumer<i32>,
+}
+impl TrackStream {
+    fn read_samples<S: Sample + FromSample<i32>>(&mut self, buf: &mut [S]) -> ReadSamplesResult {
+        match self.recv.read_chunk(buf.len()) {
+            Ok(c) => {
+                let (s1, s2) = c.as_slices();
+                for (s, b) in s1.iter().chain(s2.iter()).zip(buf.iter_mut()) {
+                    *b = S::from_sample(*s);
+                }
+                c.commit_all();
+                ReadSamplesResult::Ok
+            }
+            Err(e) => {
+                let n = {
+                    match e {
+                        ChunkError::TooFewSlots(0) => 0,
+                        ChunkError::TooFewSlots(n) => {
+                            let c = self.recv.read_chunk(n).unwrap();
+                            let (s1, s2) = c.as_slices();
+                            for (s, b) in s1.iter().chain(s2.iter()).zip(buf.iter_mut()) {
+                                *b = S::from_sample(*s);
+                            }
+                            c.commit_all();
+                            n
+                        }
+                    }
+                };
+                if self.recv.is_abandoned() {
+                    ReadSamplesResult::Done(n)
+                } else {
+                    ReadSamplesResult::Waiting
+                }
+            }
+        }
+    }
+}
 
 trait Silence {
     fn silence() -> Self;
