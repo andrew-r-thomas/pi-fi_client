@@ -19,139 +19,138 @@ use tokio::io::{AsyncRead, AsyncWrite};
 /// this is basically a specialized handle to the main audio thread that
 /// understands the context of a streamed music player
 pub struct MainStreamHandle {
-    stream: Stream,
     playing: Arc<AtomicBool>,
     queue: Arc<Mutex<Producer<TrackStream>>>,
     clear: Arc<AtomicBool>,
 }
 
+pub fn init_main_stream() -> (Stream, MainStreamHandle) {
+    let (queue, recv) = RingBuffer::new(256);
+
+    let host = cpal::default_host();
+    let device = host.default_output_device().unwrap();
+    let config = device.default_output_config().unwrap();
+
+    let playing = Arc::new(AtomicBool::new(false));
+    let clear = Arc::new(AtomicBool::new(false));
+
+    let stream = match config.sample_format() {
+        cpal::SampleFormat::I8 => build_main_stream::<i8>(
+            &device,
+            &config.into(),
+            recv,
+            playing.clone(),
+            clear.clone(),
+        )
+        .unwrap(),
+        cpal::SampleFormat::I16 => build_main_stream::<i16>(
+            &device,
+            &config.into(),
+            recv,
+            playing.clone(),
+            clear.clone(),
+        )
+        .unwrap(),
+        cpal::SampleFormat::I32 => build_main_stream::<i32>(
+            &device,
+            &config.into(),
+            recv,
+            playing.clone(),
+            clear.clone(),
+        )
+        .unwrap(),
+        cpal::SampleFormat::I64 => build_main_stream::<i64>(
+            &device,
+            &config.into(),
+            recv,
+            playing.clone(),
+            clear.clone(),
+        )
+        .unwrap(),
+        cpal::SampleFormat::U8 => build_main_stream::<u8>(
+            &device,
+            &config.into(),
+            recv,
+            playing.clone(),
+            clear.clone(),
+        )
+        .unwrap(),
+        cpal::SampleFormat::U16 => build_main_stream::<u16>(
+            &device,
+            &config.into(),
+            recv,
+            playing.clone(),
+            clear.clone(),
+        )
+        .unwrap(),
+        cpal::SampleFormat::U32 => build_main_stream::<u32>(
+            &device,
+            &config.into(),
+            recv,
+            playing.clone(),
+            clear.clone(),
+        )
+        .unwrap(),
+        cpal::SampleFormat::U64 => build_main_stream::<u64>(
+            &device,
+            &config.into(),
+            recv,
+            playing.clone(),
+            clear.clone(),
+        )
+        .unwrap(),
+        cpal::SampleFormat::F32 => build_main_stream::<f32>(
+            &device,
+            &config.into(),
+            recv,
+            playing.clone(),
+            clear.clone(),
+        )
+        .unwrap(),
+        cpal::SampleFormat::F64 => build_main_stream::<f64>(
+            &device,
+            &config.into(),
+            recv,
+            playing.clone(),
+            clear.clone(),
+        )
+        .unwrap(),
+        sample_format => panic!("Unsupported sample format '{sample_format}'"),
+    };
+
+    (
+        stream,
+        MainStreamHandle::new(clear, playing, Arc::new(Mutex::new(queue))),
+    )
+}
+
 impl MainStreamHandle {
-    pub fn new() -> Self {
-        let (queue, recv) = RingBuffer::new(256);
-
-        let host = cpal::default_host();
-        let device = host.default_output_device().unwrap();
-        let config = device.default_output_config().unwrap();
-
-        let playing = Arc::new(AtomicBool::new(false));
-        let clear = Arc::new(AtomicBool::new(false));
-
-        let stream = match config.sample_format() {
-            cpal::SampleFormat::I8 => build_main_stream::<i8>(
-                &device,
-                &config.into(),
-                recv,
-                playing.clone(),
-                clear.clone(),
-            )
-            .unwrap(),
-            cpal::SampleFormat::I16 => build_main_stream::<i16>(
-                &device,
-                &config.into(),
-                recv,
-                playing.clone(),
-                clear.clone(),
-            )
-            .unwrap(),
-            cpal::SampleFormat::I32 => build_main_stream::<i32>(
-                &device,
-                &config.into(),
-                recv,
-                playing.clone(),
-                clear.clone(),
-            )
-            .unwrap(),
-            cpal::SampleFormat::I64 => build_main_stream::<i64>(
-                &device,
-                &config.into(),
-                recv,
-                playing.clone(),
-                clear.clone(),
-            )
-            .unwrap(),
-            cpal::SampleFormat::U8 => build_main_stream::<u8>(
-                &device,
-                &config.into(),
-                recv,
-                playing.clone(),
-                clear.clone(),
-            )
-            .unwrap(),
-            cpal::SampleFormat::U16 => build_main_stream::<u16>(
-                &device,
-                &config.into(),
-                recv,
-                playing.clone(),
-                clear.clone(),
-            )
-            .unwrap(),
-            cpal::SampleFormat::U32 => build_main_stream::<u32>(
-                &device,
-                &config.into(),
-                recv,
-                playing.clone(),
-                clear.clone(),
-            )
-            .unwrap(),
-            cpal::SampleFormat::U64 => build_main_stream::<u64>(
-                &device,
-                &config.into(),
-                recv,
-                playing.clone(),
-                clear.clone(),
-            )
-            .unwrap(),
-            cpal::SampleFormat::F32 => build_main_stream::<f32>(
-                &device,
-                &config.into(),
-                recv,
-                playing.clone(),
-                clear.clone(),
-            )
-            .unwrap(),
-            cpal::SampleFormat::F64 => build_main_stream::<f64>(
-                &device,
-                &config.into(),
-                recv,
-                playing.clone(),
-                clear.clone(),
-            )
-            .unwrap(),
-            sample_format => panic!("Unsupported sample format '{sample_format}'"),
-        };
-
+    pub fn new(
+        clear: Arc<AtomicBool>,
+        playing: Arc<AtomicBool>,
+        queue: Arc<Mutex<Producer<TrackStream>>>,
+    ) -> Self {
         Self {
             clear,
-            queue: Arc::new(Mutex::new(queue)),
-            stream,
             playing,
+            queue,
         }
     }
     pub fn toggle_playing(&self) -> bool {
-        let playing = !self.playing.fetch_not(Ordering::AcqRel);
-        if playing {
-            self.stream.play();
-        } else {
-            self.stream.pause();
-        }
-        playing
+        !self.playing.fetch_not(Ordering::AcqRel)
     }
     pub fn clear(&self) {
         self.clear.store(true, Ordering::Release);
     }
-    pub fn queue_tracks(&self, tracks: Vec<TrackStream>) {
+    pub fn queue(&self, track: TrackStream) {
         let mut queue = self.queue.lock().unwrap();
-        for track in tracks {
-            queue.push(track);
-        }
+        queue.push(track).unwrap();
     }
     pub fn pause(&self) {
         self.playing.store(false, Ordering::Release);
-        self.stream.pause();
     }
     pub fn play(&self) {
         self.playing.store(true, Ordering::Release);
-        self.stream.play();
     }
 }
 
@@ -182,6 +181,7 @@ impl MainStream {
         if self.clear.load(Ordering::Acquire) {
             let c = self.queue.read_chunk(self.queue.slots()).unwrap();
             c.commit_all();
+            self.current_track = None;
             self.clear.store(false, Ordering::Release);
         }
 
@@ -223,7 +223,7 @@ where
     let stream = device
         .build_output_stream(config, move |buf: &mut [S], _| ms.cb(buf), |_| {}, None)
         .unwrap();
-    stream.pause();
+    stream.play().unwrap();
     Ok(stream)
 }
 
@@ -231,6 +231,15 @@ enum ReadSamplesResult {
     Ok,
     Done(usize),
     Waiting,
+}
+
+pub fn spawn_track_stream() -> (TrackStream, TrackStreamHandle) {
+    let (sample_send, sample_recv) = RingBuffer::new(1024);
+    let (wake_send, wake_rec) = RingBuffer::new(1);
+    (
+        TrackStream::new(sample_recv, wake_rec),
+        TrackStreamHandle::new(sample_send, wake_send),
+    )
 }
 
 pub struct TrackStream {
@@ -286,41 +295,47 @@ pub struct TrackStreamHandle {
     waker: Producer<Waker>,
 }
 impl TrackStreamHandle {
+    pub fn new(send: Producer<i32>, waker: Producer<Waker>) -> Self {
+        Self { send, waker }
+    }
     pub async fn send(&mut self, buf: &[i32]) {
-        // wait until there are enough slots to send the data
-        SendFut {
-            send: &mut self.send,
-            len: buf.len(),
-            waker: &mut self.waker,
-        }
-        .await;
+        let mut sent = 0;
+        while sent < buf.len() {
+            // wait until there are some slots
+            let slots = SendFut {
+                send: &mut self.send,
+                waker: &mut self.waker,
+            }
+            .await;
 
-        // send data
-        let mut w = self.send.write_chunk(buf.len()).unwrap();
-        let (s1, s2) = w.as_mut_slices();
-        s1.copy_from_slice(&buf[0..s1.len()]);
-        s2.copy_from_slice(&buf[s1.len()..]);
-        w.commit_all();
+            // send data
+            let to_send = &buf[sent..sent + slots];
+            let mut w = self.send.write_chunk(slots).unwrap();
+            let (s1, s2) = w.as_mut_slices();
+            s1.copy_from_slice(&to_send[0..s1.len()]);
+            s2.copy_from_slice(&to_send[s1.len()..]);
+            w.commit_all();
+            sent += slots;
+        }
     }
 }
 pub struct SendFut<'a> {
     send: &'a mut Producer<i32>,
-    len: usize,
     waker: &'a mut Producer<Waker>,
 }
 impl Future for SendFut<'_> {
-    type Output = ();
+    type Output = usize;
 
     fn poll(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
-        let avail = self.send.slots();
-        if avail >= self.len {
-            Poll::Ready(())
-        } else {
-            self.waker.push(cx.waker().clone()).unwrap();
-            Poll::Pending
+        match self.send.slots() {
+            0 => {
+                self.waker.push(cx.waker().clone()).unwrap();
+                Poll::Pending
+            }
+            n => Poll::Ready(n),
         }
     }
 }

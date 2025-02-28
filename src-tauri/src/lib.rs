@@ -2,26 +2,26 @@ pub mod cache;
 mod flac;
 mod main_stream;
 pub mod player;
-pub mod track_buffer;
 
 use std::sync::{Arc, Mutex};
 
 use cache::{Cache, GetAlbumResp, LibraryData};
+use main_stream::{init_main_stream, MainStreamHandle};
 use player::{Player, PlayerUpdateMsg};
-use rodio::{OutputStream, OutputStreamHandle};
 use tauri::{ipc::Channel, Manager, State};
 use tauri_plugin_http::reqwest::Client;
 
-const SERVER_URL: &'static str = "http://192.168.50.68:8080";
+// const SERVER_URL: &'static str = "http://192.168.50.68:8080";
+const SERVER_URL: &'static str = "http://localhost:8080";
 
 struct Systems {
     cache: Arc<Cache>,
     player: Mutex<Option<Player>>,
     client: Client,
-    stream_handle: OutputStreamHandle,
+    handle: Mutex<Option<MainStreamHandle>>,
 }
 impl Systems {
-    pub fn new(stream_handle: OutputStreamHandle) -> Self {
+    pub fn new(handle: MainStreamHandle) -> Self {
         let client = Client::new();
         let cache = Arc::new(Cache::new(client.clone()));
 
@@ -29,7 +29,7 @@ impl Systems {
             client,
             cache,
             player: Mutex::new(None),
-            stream_handle,
+            handle: Mutex::new(Some(handle)),
         }
     }
 }
@@ -54,11 +54,12 @@ async fn play_track(id: i64, systems: State<'_, Systems>) -> Result<(), ()> {
 #[tauri::command]
 fn setup_player(systems: State<'_, Systems>, channel: Channel<PlayerUpdateMsg>) {
     let mut player = systems.player.lock().unwrap();
+    let handle = systems.handle.lock().unwrap().take().unwrap();
     *player = Some(Player::new(
-        &systems.stream_handle,
         systems.client.clone(),
         systems.cache.clone(),
         channel,
+        handle,
     ))
 }
 
@@ -80,13 +81,13 @@ fn skip(systems: State<'_, Systems>) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let (_stream, stream_handle) = OutputStream::try_default().unwrap();
-
+    let (_stream, handle) = init_main_stream();
+    println!("made stream");
     tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            app.manage(Systems::new(stream_handle));
+            app.manage(Systems::new(handle));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
