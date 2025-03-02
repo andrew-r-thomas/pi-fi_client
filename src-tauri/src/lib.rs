@@ -1,13 +1,13 @@
 pub mod cache;
-mod flac;
 mod main_stream;
 pub mod player;
-
-use std::sync::{Arc, Mutex};
 
 use cache::{Cache, GetAlbumResp, LibraryData};
 use main_stream::{init_main_stream, MainStreamHandle};
 use player::{Player, PlayerUpdateMsg};
+
+use std::sync::{Arc, Mutex};
+
 use tauri::{ipc::Channel, Manager, State};
 use tauri_plugin_http::reqwest::Client;
 

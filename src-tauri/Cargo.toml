@@ -32,4 +32,5 @@ claxon = "0.4.3"
 bytes = "1.10.0"
 tokio-util = { version = "0.7.13", features = ["full"] }
 symphonia = "0.5.4"
+rubato = "0.16.1"
 

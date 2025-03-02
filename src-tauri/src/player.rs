@@ -1,17 +1,15 @@
-use std::{io::Cursor, sync::Arc};
+use std::{collections::VecDeque, io::Cursor, sync::Arc};
 use symphonia::{
     core::{
         audio::SampleBuffer,
+        conv::IntoSample,
         io::{MediaSourceStream, MediaSourceStreamOptions},
         probe::Hint,
     },
     default,
 };
 
-use crate::{
-    main_stream::{spawn_track_stream, MainStreamHandle},
-    SERVER_URL,
-};
+use crate::{main_stream::MainStreamHandle, SERVER_URL};
 
 use serde::Serialize;
 use tauri::{async_runtime::spawn, ipc::Channel};
@@ -88,7 +86,8 @@ impl Player {
             .make(&track.codec_params, &Default::default())
             .unwrap();
 
-        let (stream, mut handle) = spawn_track_stream();
+        let srate = decoder.codec_params().sample_rate.unwrap();
+        let (stream, mut handle) = self.0.main_stream_handle.spawn_track_stream(srate);
         self.0.main_stream_handle.queue(stream);
         self.0.main_stream_handle.play();
 
@@ -99,12 +98,11 @@ impl Player {
 
         spawn(async move {
             while let Ok(packet) = reader.format.next_packet() {
-                println!("got packet");
                 let buf = decoder.decode(&packet).unwrap();
-                let mut samples = SampleBuffer::new(buf.capacity() as u64, *buf.spec());
-                samples.copy_interleaved_ref(buf);
-                handle.send(samples.samples()).await;
-                println!("sent buf");
+                let mut samps = SampleBuffer::new(buf.capacity() as u64, *buf.spec());
+                samps.copy_planar_ref(buf);
+
+                handle.send(samps.samples()).await;
             }
         });
     }

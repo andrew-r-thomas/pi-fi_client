@@ -1,20 +1,18 @@
 use std::{
     future::Future,
-    io::Read,
     sync::{
-        atomic::{AtomicBool, AtomicPtr, Ordering},
+        atomic::{AtomicBool, Ordering},
         Arc, Mutex,
     },
     task::{Poll, Waker},
 };
 
-use claxon::FlacReader;
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
     Device, FromSample, Sample, SizedSample, Stream, StreamConfig,
 };
 use rtrb::{chunks::ChunkError, Consumer, Producer, RingBuffer};
-use tokio::io::{AsyncRead, AsyncWrite};
+use rubato::{FftFixedIn, Resampler};
 
 /// this is basically a specialized handle to the main audio thread that
 /// understands the context of a streamed music player
@@ -22,6 +20,7 @@ pub struct MainStreamHandle {
     playing: Arc<AtomicBool>,
     queue: Arc<Mutex<Producer<TrackStream>>>,
     clear: Arc<AtomicBool>,
+    out_rate: u32,
 }
 
 pub fn init_main_stream() -> (Stream, MainStreamHandle) {
@@ -30,6 +29,7 @@ pub fn init_main_stream() -> (Stream, MainStreamHandle) {
     let host = cpal::default_host();
     let device = host.default_output_device().unwrap();
     let config = device.default_output_config().unwrap();
+    let sample_rate = config.sample_rate().0;
 
     let playing = Arc::new(AtomicBool::new(false));
     let clear = Arc::new(AtomicBool::new(false));
@@ -120,7 +120,7 @@ pub fn init_main_stream() -> (Stream, MainStreamHandle) {
 
     (
         stream,
-        MainStreamHandle::new(clear, playing, Arc::new(Mutex::new(queue))),
+        MainStreamHandle::new(clear, playing, Arc::new(Mutex::new(queue)), sample_rate),
     )
 }
 
@@ -129,11 +129,13 @@ impl MainStreamHandle {
         clear: Arc<AtomicBool>,
         playing: Arc<AtomicBool>,
         queue: Arc<Mutex<Producer<TrackStream>>>,
+        out_rate: u32,
     ) -> Self {
         Self {
             clear,
             playing,
             queue,
+            out_rate,
         }
     }
     pub fn toggle_playing(&self) -> bool {
@@ -151,6 +153,15 @@ impl MainStreamHandle {
     }
     pub fn play(&self) {
         self.playing.store(true, Ordering::Release);
+    }
+
+    pub fn spawn_track_stream(&self, in_rate: u32) -> (TrackStream, TrackStreamHandle) {
+        let (sample_send, sample_recv) = RingBuffer::new(4096);
+        let (wake_send, wake_rec) = RingBuffer::new(1);
+        (
+            TrackStream::new(sample_recv, wake_rec),
+            TrackStreamHandle::new(sample_send, wake_send, in_rate, self.out_rate),
+        )
     }
 }
 
@@ -174,7 +185,7 @@ impl MainStream {
         }
     }
 
-    pub fn cb<S: Sample + Silence + FromSample<i32>>(&mut self, buf: &mut [S]) {
+    pub fn cb<S: Sample + Silence + FromSample<f32>>(&mut self, buf: &mut [S]) {
         // output silence by default
         buf.fill(S::silence());
 
@@ -217,7 +228,7 @@ fn build_main_stream<S>(
     clear: Arc<AtomicBool>,
 ) -> Result<Stream, ()>
 where
-    S: SizedSample + FromSample<i32> + Silence + Send + 'static,
+    S: SizedSample + FromSample<f32> + Silence + Send + 'static,
 {
     let mut ms = MainStream::new(recv, playing, clear);
     let stream = device
@@ -233,24 +244,16 @@ enum ReadSamplesResult {
     Waiting,
 }
 
-pub fn spawn_track_stream() -> (TrackStream, TrackStreamHandle) {
-    let (sample_send, sample_recv) = RingBuffer::new(1024);
-    let (wake_send, wake_rec) = RingBuffer::new(1);
-    (
-        TrackStream::new(sample_recv, wake_rec),
-        TrackStreamHandle::new(sample_send, wake_send),
-    )
-}
-
 pub struct TrackStream {
-    recv: Consumer<i32>,
+    recv: Consumer<f32>,
     wakers: Consumer<Waker>,
 }
 impl TrackStream {
-    pub fn new(recv: Consumer<i32>, wakers: Consumer<Waker>) -> Self {
+    // TODO: channels (right now we assume everything is stereo)
+    pub fn new(recv: Consumer<f32>, wakers: Consumer<Waker>) -> Self {
         Self { recv, wakers }
     }
-    fn read_samples<S: Sample + FromSample<i32>>(&mut self, buf: &mut [S]) -> ReadSamplesResult {
+    fn read_samples<S: Sample + FromSample<f32>>(&mut self, buf: &mut [S]) -> ReadSamplesResult {
         match self.recv.read_chunk(buf.len()) {
             Ok(c) => {
                 let (s1, s2) = c.as_slices();
@@ -291,16 +294,44 @@ impl TrackStream {
     }
 }
 pub struct TrackStreamHandle {
-    send: Producer<i32>,
+    send: Producer<f32>,
     waker: Producer<Waker>,
+    sample_rate_converter: FftFixedIn<f32>,
 }
 impl TrackStreamHandle {
-    pub fn new(send: Producer<i32>, waker: Producer<Waker>) -> Self {
-        Self { send, waker }
+    pub fn new(send: Producer<f32>, waker: Producer<Waker>, in_rate: u32, out_rate: u32) -> Self {
+        Self {
+            send,
+            waker,
+            sample_rate_converter: FftFixedIn::new(in_rate as usize, out_rate as usize, 256, 2, 2)
+                .unwrap(),
+        }
     }
-    pub async fn send(&mut self, buf: &[i32]) {
+    pub async fn send(&mut self, buf: &[f32]) {
+        let left = &buf[0..buf.len() / 2];
+        let right = &buf[buf.len() / 2..];
+
+        let mut interleaved = Vec::new();
+        let left_chunks = left.chunks_exact(256);
+        let right_chunks = right.chunks_exact(256);
+        let left_rem = left_chunks.remainder();
+        let right_rem = right_chunks.remainder();
+        println!("{}", left_rem.len());
+        println!("{}", right_rem.len());
+        for (left_chunk, right_chunk) in left_chunks.zip(right_chunks) {
+            let resampled = self
+                .sample_rate_converter
+                .process(&[left_chunk, right_chunk], None)
+                .unwrap();
+            for i in 0..resampled[0].len() {
+                for ch in &resampled {
+                    interleaved.push(ch[i]);
+                }
+            }
+        }
+
         let mut sent = 0;
-        while sent < buf.len() {
+        while sent < interleaved.len() {
             // wait until there are some slots
             let slots = SendFut {
                 send: &mut self.send,
@@ -309,8 +340,8 @@ impl TrackStreamHandle {
             .await;
 
             // send data
-            let to_send = &buf[sent..sent + slots];
-            let mut w = self.send.write_chunk(slots).unwrap();
+            let to_send = &interleaved[sent..(sent + slots).min(interleaved.len())];
+            let mut w = self.send.write_chunk(to_send.len()).unwrap();
             let (s1, s2) = w.as_mut_slices();
             s1.copy_from_slice(&to_send[0..s1.len()]);
             s2.copy_from_slice(&to_send[s1.len()..]);
@@ -320,7 +351,7 @@ impl TrackStreamHandle {
     }
 }
 pub struct SendFut<'a> {
-    send: &'a mut Producer<i32>,
+    send: &'a mut Producer<f32>,
     waker: &'a mut Producer<Waker>,
 }
 impl Future for SendFut<'_> {
