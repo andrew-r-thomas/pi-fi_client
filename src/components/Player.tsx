@@ -52,11 +52,11 @@ function Player() {
   return (
     <div
       onClick={() => setPlayerBig(!playerBig())}
-      class={`border-y fixed bottom-0 bg-black p-4 transition-all ease-in-out duration-100 border-white z-40 flex flex-row w-full max-w-full items-center justify-center ${playerBig() ? "h-full" : "h-24"}`}>
+      class={`border-y fixed bottom-0 bg-black p-4 transition-all ease-in-out duration-100 border-white z-40 flex w-full max-w-full items-center justify-center ${playerBig() ? "h-full" : "h-24"}`}>
       <Show when={playerData.current_track !== null} fallback={<div>uhhh</div>}>
-        <div class="flex flex-row justify-between w-full">
-          <div class="flex flex-row space-x-4 max-w-2/3 overflow-hidden">
-            <img class="w-14 h-14" src={`${SERVER_URL}/get-image?id=${playerData.current_track?.cover_art_id}`} />
+        <div class={`flex ${playerBig() ? "flex-col" : "flex-row"} justify-between w-full h-full`}>
+          <div class={`flex ${playerBig() ? "flex-col w-full" : "flex-row max-w-2/3 space-x-4"} overflow-hidden`}>
+            <img class={`w-14 h-14`} src={`${SERVER_URL}/get-image?id=${playerData.current_track?.cover_art_id}`} />
             <div class="flex flex-col w-full overflow-hidden">
               <p class="font-bold font-serif text-xl text-nowrap overflow-hidden text-ellipsis w-full">{playerData.current_track?.track_title}</p>
               <p>{playerData.current_track?.artist_title}</p>
